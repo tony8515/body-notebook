@@ -24,3 +24,188 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+button {
+  background-color: #222;       /* 어두운 배경 */
+  color: #ffffff;               /* 흰 글자 */
+  border: 1px solid #444;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+button:hover {
+  background-color: #333;
+}
+button:disabled {
+  opacity: 1 !important;     /* 흐려지지 않게 */
+  background-color: #555;    /* 약간 밝은 회색 */
+  color: #ffffff;            /* 글자 흰색 유지 */
+  cursor: not-allowed;
+}
+/* ===== Button styles (use with className="btn", "btn btnDanger", "btnPrimary") ===== */
+.btn,
+.btnPrimary {
+  background-color: #222;
+  color: #fff;
+  border: 1px solid #444;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* hover */
+.btn:hover,
+.btnPrimary:hover {
+  background-color: #333;
+}
+
+/* primary(저장 같은 강조 버튼) */
+.btnPrimary {
+  background-color: #0b5;
+  border-color: #0b5;
+}
+.btnPrimary:hover {
+  background-color: #0a4;
+}
+
+/* danger(삭제 버튼) */
+.btn.btnDanger {
+  background-color: #96535d;
+  border-color: #96535d;
+  color: #fff;
+}
+.btn.btnDanger:hover {
+  background-color: #96535d;
+}
+
+/* disabled: 글자 안 흐리게 + 배경 어둡게 유지 */
+.btn:disabled,
+.btnPrimary:disabled {
+  opacity: 1 !important;
+  background-color: #555;
+  border-color: #555;
+  color: #fff;
+  cursor: not-allowed;
+}
+/* ===== Button styles (use with className="btn", "btn btnDanger", "btnPrimary") ===== */
+.btn,
+.btnPrimary {
+  background-color: #222;
+  color: #fff;
+  border: 1px solid #444;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* hover */
+.btn:hover,
+.btnPrimary:hover {
+  background-color: #333;
+}
+
+/* primary(저장 같은 강조 버튼) */
+.btnPrimary {
+  background-color: #0b5;
+  border-color: #0b5;
+}
+.btnPrimary:hover {
+  background-color: #0a4;
+}
+
+/* danger(삭제 버튼) */
+.btn.btnDanger {
+  background-color: #96535d;
+  border-color: #96535d;
+  color: #fff;
+}
+.btn.btnDanger:hover {
+  background-color: #96535d;
+}
+
+/* disabled: 글자 안 흐리게 + 배경 어둡게 유지 */
+.btn:disabled,
+.btnPrimary:disabled {
+  opacity: 1 !important;
+  background-color: #555;
+  border-color: #555;
+  color: #fff;
+  cursor: not-allowed;
+}
+/* ===== Buttons: 우리가 쓰는 클래스들 확실히 통일 ===== */
+.btn,
+.btnPrimary,
+.btnDanger {
+  background: #222 !important;
+  color: #fff !important;
+  border: 1px solid #444 !important;
+  padding: 10px 16px !important;
+  border-radius: 12px !important;
+  font-weight: 700 !important;
+}
+
+.btn:hover,
+.btnPrimary:hover,
+.btnDanger:hover {
+  background: #333 !important;
+}
+
+.btn:disabled,
+.btnPrimary:disabled,
+.btnDanger:disabled {
+  opacity: 1 !important;
+  background: #555 !important;
+  color: #fff !important;
+  cursor: not-allowed !important;
+}
+
+/* 빨간 삭제 버튼은 빨갛게 유지 */
+.btnDanger {
+  background: #96535d !important;
+  border-color: #96535d !important;
+}
+.btnDanger:hover {
+  background: #96535d !important;
+}
+
+/* ===== file input(Choose Files) 흰 버튼 제거 ===== */
+/* 모바일/브라우저마다 다르지만, 가능한 한 버튼 부분 스타일을 강제 */
+input[type="file"] {
+  color: #ddd;
+}
+
+input[type="file"]::file-selector-button {
+  background: #222 !important;
+  color: #fff !important;
+  border: 1px solid #444 !important;
+  padding: 10px 16px !important;
+  border-radius: 12px !important;
+  font-weight: 700 !important;
+  margin-right: 12px !important;
+}
+
+/* 크롬/삼성브라우저 호환용(웹킷) */
+input[type="file"]::-webkit-file-upload-button {
+  background: #222 !important;
+  color: #fff !important;
+  border: 1px solid #444 !important;
+  padding: 10px 16px !important;
+  border-radius: 12px !important;
+  font-weight: 700 !important;
+  margin-right: 12px !important;
+}
+/* ===== 최근 기록 카드 안 텍스트 선명하게 ===== */
+
+.card {
+  color: #ffffff;   /* 기본 글자 흰색 */
+}
+
+.card .hint {
+  color: #bbbbbb;   /* 설명용 작은 글씨는 약간만 연하게 */
+}
+
+.card span {
+  color: #ffffff;
+}
