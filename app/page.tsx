@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 /** =========================
  *  Config
  *  ========================= */
-const MED_BUCKET = "med_docs_bucket"; // ✅ 본인 Storage bucket 이름으로 바꾸세요
+const MED_BUCKET = "meddocs"; // ✅ 본인 Storage bucket 이름으로 바꾸세요
 const MED_DOC_TYPE = "rx_supplements"; // DB에 enum/텍스트로 쓰는 값. 기존과 다르면 바꾸세요
 
 /** =========================
