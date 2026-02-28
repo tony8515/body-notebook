@@ -55,33 +55,32 @@ function toNumOrNull(v: string) {
 }
 
 function safeFileName(name: string) {
-  // 파일명 안전하게 (공백/특수문자 최소화)
   return (name || "file")
     .replace(/\s+/g, "_")
     .replace(/[^a-zA-Z0-9._-]/g, "_")
     .slice(0, 140);
 }
 
-// ✅ 버킷 이름(사진에서 meddocs)
 const MED_BUCKET = "meddocs";
 
-// ✅ Supabase client (이 파일에서 직접 생성)
+// ✅ Supabase client (persistSession 추가하여 로그인 유지 강화)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  }
+});
 
 export default function Home() {
-  // ---- Auth UI ----
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
-
   const [session, setSession] = useState<Session | null>(null);
   const userId = session?.user?.id ?? null;
 
-  // ---- Body entries ----
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
-
   const [form, setForm] = useState(() => ({
     date: todayYMD(),
     weight: "",
@@ -92,10 +91,8 @@ export default function Home() {
     kneePain: "0",
     notes: "",
   }));
-
   const [editing, setEditing] = useState<{ id: string; originalDate: string } | null>(null);
 
-  // ---- Med docs ----
   const [medTitle, setMedTitle] = useState("");
   const [medDoc, setMedDoc] = useState<MedDocRow | null>(null);
   const [medUrls, setMedUrls] = useState<Record<string, string>>({});
@@ -113,10 +110,6 @@ export default function Home() {
 
       if (data.session?.user?.id) {
         await Promise.all([loadEntries(data.session.user.id), loadMedDoc(data.session.user.id)]);
-      } else {
-        setEntries([]);
-        setMedDoc(null);
-        setMedUrls({});
       }
     }
 
@@ -153,8 +146,10 @@ export default function Home() {
       }
       const { error } = await supabase.auth.signInWithPassword({ email: e, password: pw });
       if (error) throw error;
+      alert("로그인 성공!");
     } catch (err: any) {
       alert("로그인 실패: " + (err?.message ?? String(err)));
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -173,6 +168,7 @@ export default function Home() {
       alert("가입 완료! 이제 로그인하세요.");
     } catch (err: any) {
       alert("가입 실패: " + (err?.message ?? String(err)));
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -214,8 +210,7 @@ export default function Home() {
 
       setEntries(mapped);
     } catch (err: any) {
-      alert("불러오기 실패: " + (err?.message ?? String(err)));
-      console.log(err);
+      console.error("데이터 불러오기 실패:", err);
     }
   }
 
@@ -231,6 +226,8 @@ export default function Home() {
         return;
       }
 
+      console.log("저장 시작...", form);
+
       const payload: any = {
         user_id: userId,
         date: form.date,
@@ -242,11 +239,6 @@ export default function Home() {
         knee_pain: toNumOrNull(form.kneePain) ?? 0,
         notes: form.notes?.trim() ? form.notes.trim() : null,
       };
-
-      // 날짜를 "키"처럼 쓰고 싶으면: 동일 날짜는 덮어쓰기(업서트)
-      // 가장 쉬운 방법: (user_id, date) 유니크 인덱스가 DB에 있으면 upsert가 깔끔해요.
-      // 지금은 id 기반이 아닐 수도 있으니, 편하게: 같은 날짜가 있으면 먼저 찾고 업데이트/없으면 insert
-      // (유니크 인덱스 없을 때도 안전하게 동작)
 
       // 1) 같은 날짜 기존 row 찾기
       const { data: existing, error: findErr } = await supabase
@@ -281,9 +273,10 @@ export default function Home() {
         notes: "",
       }));
       setEditing(null);
+      alert("저장되었습니다!");
     } catch (err: any) {
+      console.error("저장 실패 에러:", err);
       alert("저장 실패: " + (err?.message ?? String(err)));
-      console.log(err);
     } finally {
       setLoading(false);
     }
@@ -324,10 +317,7 @@ export default function Home() {
 
     setLoading(true);
     try {
-      if (!userId) {
-        alert("로그인이 필요합니다.");
-        return;
-      }
+      if (!userId) return;
       const { error } = await supabase.from("body_entries").delete().eq("id", e.id);
       if (error) throw error;
 
@@ -343,7 +333,6 @@ export default function Home() {
   // ------------------- DB: med_docs + Storage -------------------
   async function loadMedDoc(uid: string) {
     try {
-      setMedStatus("약/영양제 문서 확인중...");
       const { data, error } = await supabase
         .from("med_docs")
         .select("*")
@@ -359,16 +348,12 @@ export default function Home() {
 
       const paths = doc?.file_paths ?? [];
       await refreshMedSignedUrls(paths);
-
-      setMedStatus("");
     } catch (err: any) {
-      setMedStatus("불러오기 실패: " + (err?.message ?? String(err)));
-      console.log(err);
+      console.error("문서 불러오기 실패:", err);
     }
   }
 
   async function ensureMedDoc(uid: string) {
-    // 없으면 하나 만들고 리턴
     const { data, error } = await supabase
       .from("med_docs")
       .select("*")
@@ -400,30 +385,21 @@ export default function Home() {
 
   async function uploadMedFiles(files: FileList | null) {
     try {
-      setMedStatus(`STEP1 files: ${files?.length ?? 0}`);
       if (!files || files.length === 0) return;
-
-      setMedStatus(`STEP2 userId: ${userId ?? "null"}`);
       if (!userId) {
-        setMedStatus("로그인이 필요합니다.");
+        alert("로그인이 필요합니다.");
         return;
       }
 
       setMedBusy(true);
+      setMedStatus("파일 업로드 중...");
 
-      // doc 준비
       let doc = medDoc;
       if (!doc) {
-        setMedStatus("STEP3 loadMedDoc...");
         doc = await ensureMedDoc(userId);
         setMedDoc(doc);
       }
-      if (!doc) {
-        setMedStatus("STEP3 FAIL: medDoc 로드/생성 실패");
-        return;
-      }
 
-      setMedStatus("STEP4 uploading...");
       const newPaths: string[] = [];
 
       for (const file of Array.from(files)) {
@@ -436,13 +412,13 @@ export default function Home() {
           .upload(path, file, { upsert: true, contentType: file.type });
 
         if (upErr) {
-          setMedStatus("UPLOAD ERROR: " + upErr.message);
-          continue;
+          console.error("Storage 업로드 에러:", upErr);
+          throw upErr;
         }
         newPaths.push(path);
       }
 
-      setMedStatus("STEP5 DB update...");
+      setMedStatus("DB 업데이트 중...");
       const merged = [...(doc.file_paths ?? []), ...newPaths];
 
       const updatePayload: any = {
@@ -458,21 +434,19 @@ export default function Home() {
         .single();
 
       if (updErr) {
-        setMedStatus("DB UPDATE ERROR: " + updErr.message);
-        return;
+        console.error("DB 업데이트 에러:", updErr);
+        throw updErr;
       }
 
       const updatedDoc = upd as MedDocRow;
       setMedDoc(updatedDoc);
-
-      setMedStatus("STEP6 signed url...");
       await refreshMedSignedUrls(updatedDoc.file_paths ?? []);
 
-      setMedStatus("✅ 완료! 사진이 저장되었습니다.");
+      setMedStatus("✅ 사진 저장 완료!");
       setTimeout(() => setMedStatus(""), 2500);
     } catch (e: any) {
-      setMedStatus("❌ EXCEPTION: " + (e?.message ?? String(e)));
-      console.log(e);
+      console.error("업로드 예외:", e);
+      setMedStatus("❌ 저장 실패: " + e.message);
     } finally {
       setMedBusy(false);
     }
@@ -484,11 +458,7 @@ export default function Home() {
     if (!ok) return;
 
     try {
-      if (!userId) {
-        alert("로그인이 필요합니다.");
-        return;
-      }
-
+      if (!userId) return;
       setMedBusy(true);
 
       const { error: delErr } = await supabase.storage.from(MED_BUCKET).remove([path]);
@@ -510,7 +480,7 @@ export default function Home() {
       await refreshMedSignedUrls(updatedDoc.file_paths ?? []);
     } catch (e: any) {
       alert("삭제 실패: " + (e?.message ?? String(e)));
-      console.log(e);
+      console.error(e);
     } finally {
       setMedBusy(false);
     }
@@ -520,47 +490,21 @@ export default function Home() {
 
   // ------------------- UI -------------------
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto", padding: 16, color: "#eee" }}>
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: 16, color: "#eee", fontFamily: "sans-serif" }}>
       <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>Body Notebook</h1>
-      <p style={{ opacity: 0.8, marginTop: 0 }}>
-        건강/운동/무릎 통증을 간단히 기록해봅시다.
-      </p>
+      <p style={{ opacity: 0.8, marginTop: 0 }}>건강/운동/무릎 통증을 기록해봅시다.</p>
 
       <div style={cardStyle}>
-        <h2 style={h2Style}>로그인 (비밀번호로 로그인)</h2>
-
+        <h2 style={h2Style}>로그인 (이메일로 로그인)</h2>
         <div style={{ display: "grid", gap: 10 }}>
-          <input
-            style={inputStyle}
-            placeholder="이메일"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
-          />
-          <input
-            style={inputStyle}
-            placeholder="비밀번호"
-            value={pw}
-            onChange={(e) => setPw(e.target.value)}
-            type="password"
-            autoComplete="current-password"
-          />
-
+          <input style={inputStyle} placeholder="이메일" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+          <input style={inputStyle} placeholder="비밀번호" value={pw} onChange={(e) => setPw(e.target.value)} type="password" autoComplete="current-password" />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button style={btnStyle} onClick={signIn} disabled={loading}>
-              로그인
-            </button>
-            <button style={btnStyle} onClick={signUp} disabled={loading}>
-              가입
-            </button>
-            <button style={btnStyle} onClick={signOut} disabled={loading || !session}>
-              로그아웃
-            </button>
+            <button style={btnStyle} onClick={signIn} disabled={loading}>로그인</button>
+            <button style={btnStyle} onClick={signUp} disabled={loading}>가입</button>
+            <button style={btnStyle} onClick={signOut} disabled={loading || !session}>로그아웃</button>
           </div>
-
-          <div style={{ opacity: 0.85, fontSize: 14 }}>
-            현재: {session?.user?.email ?? "로그인 전"}
-          </div>
+          <div style={{ opacity: 0.85, fontSize: 14 }}>현재: {session?.user?.email ?? "로그인 전"}</div>
         </div>
       </div>
 
@@ -582,171 +526,39 @@ export default function Home() {
 
       <div style={cardStyle}>
         <h2 style={h2Style}>{editing ? "기록 수정" : "새 기록"}</h2>
-
         <div style={{ display: "grid", gap: 10 }}>
-          <input
-            style={inputStyle}
-            value={form.date}
-            onChange={(e) => setForm((p) => ({ ...p, date: e.target.value }))}
-            placeholder="YYYY-MM-DD"
-          />
-          <input
-            style={inputStyle}
-            value={form.weight}
-            onChange={(e) => setForm((p) => ({ ...p, weight: e.target.value }))}
-            placeholder="체중 (예: 165.7)"
-          />
+          <input style={inputStyle} value={form.date} onChange={(e) => setForm((p) => ({ ...p, date: e.target.value }))} placeholder="YYYY-MM-DD" />
+          <input style={inputStyle} value={form.weight} onChange={(e) => setForm((p) => ({ ...p, weight: e.target.value }))} placeholder="체중 (예: 165.7)" />
           <div style={{ display: "flex", gap: 10 }}>
-            <input
-              style={inputStyle}
-              value={form.bp_s}
-              onChange={(e) => setForm((p) => ({ ...p, bp_s: e.target.value }))}
-              placeholder="혈압 S"
-            />
-            <input
-              style={inputStyle}
-              value={form.bp_d}
-              onChange={(e) => setForm((p) => ({ ...p, bp_d: e.target.value }))}
-              placeholder="혈압 D"
-            />
+            <input style={inputStyle} value={form.bp_s} onChange={(e) => setForm((p) => ({ ...p, bp_s: e.target.value }))} placeholder="혈압 S" />
+            <input style={inputStyle} value={form.bp_d} onChange={(e) => setForm((p) => ({ ...p, bp_d: e.target.value }))} placeholder="혈압 D" />
           </div>
-
           <div style={{ display: "flex", gap: 10 }}>
-            <input
-              style={inputStyle}
-              value={form.exerciseMin}
-              onChange={(e) => setForm((p) => ({ ...p, exerciseMin: e.target.value }))}
-              placeholder="운동(분)"
-            />
-            <input
-              style={inputStyle}
-              value={form.plankMin}
-              onChange={(e) => setForm((p) => ({ ...p, plankMin: e.target.value }))}
-              placeholder="플랭크(분)"
-            />
+            <input style={inputStyle} value={form.exerciseMin} onChange={(e) => setForm((p) => ({ ...p, exerciseMin: e.target.value }))} placeholder="운동(분)" />
+            <input style={inputStyle} value={form.plankMin} onChange={(e) => setForm((p) => ({ ...p, plankMin: e.target.value }))} placeholder="플랭크(분)" />
           </div>
-
-          <input
-            style={inputStyle}
-            value={form.kneePain}
-            onChange={(e) => setForm((p) => ({ ...p, kneePain: e.target.value }))}
-            placeholder="무릎통증 0~10"
-          />
-
-          <input
-            style={inputStyle}
-            value={form.notes}
-            onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
-            placeholder="메모 (예: 아침 첫걸음이 아팠음, 탁구 후 괜찮아짐)"
-          />
-
-          <button style={btnStyle} onClick={saveEntry} disabled={loading}>
-            {loading ? "저장 중..." : editing ? "수정 저장" : "저장"}
-          </button>
-
-          {editing && (
-            <button style={btnStyle} onClick={cancelEdit} disabled={loading}>
-              수정 취소
-            </button>
-          )}
-
-          <div style={{ opacity: 0.85, fontSize: 14 }}>
-            ✅ Supabase DB에 저장됩니다. (같은 날짜는 자동으로 덮어쓰기)
-          </div>
+          <input style={inputStyle} value={form.kneePain} onChange={(e) => setForm((p) => ({ ...p, kneePain: e.target.value }))} placeholder="무릎통증 0~10" />
+          <input style={inputStyle} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} placeholder="메모" />
+          <button style={btnStyle} onClick={saveEntry} disabled={loading}>{loading ? "처리 중..." : editing ? "수정 저장" : "저장"}</button>
+          {editing && <button style={btnStyle} onClick={cancelEdit} disabled={loading}>수정 취소</button>}
         </div>
       </div>
 
       <div style={cardStyle}>
         <h2 style={h2Style}>처방약/영양제 (사진 보관)</h2>
-        <p style={{ opacity: 0.8, marginTop: 0 }}>
-          현재 복용 중인 약/영양제 목록을 사진으로 보관합니다. (여러 장 가능)
-        </p>
-
-        <div style={{ display: "grid", gap: 10 }}>
-          <input
-            style={inputStyle}
-            value={medTitle}
-            onChange={(e) => setMedTitle(e.target.value)}
-            placeholder="예: 현재 복용 약/영양제"
-          />
-
-          <label style={{ display: "inline-block" }}>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              capture="environment"
-              style={{ display: "none" }}
-              onChange={(e) => uploadMedFiles(e.target.files)}
-              disabled={medBusy}
-            />
-            <button style={btnStyle} disabled={medBusy}>
-              📷 사진 찍기 / 추가
-            </button>
-          </label>
-
-          <div style={{ opacity: 0.85 }}>{medBusy ? "처리 중..." : ""}</div>
-          <div style={{ opacity: 0.85 }}>{medStatus}</div>
-
-          {(medDoc?.file_paths?.length ?? 0) === 0 ? (
-            <div style={{ opacity: 0.8 }}>아직 사진이 없습니다. 위에서 사진을 추가해보세요.</div>
-          ) : (
-            <div style={{ display: "grid", gap: 12 }}>
-              {(medDoc?.file_paths ?? []).map((p) => (
-                <div key={p} style={{ border: "1px solid #333", borderRadius: 12, padding: 10 }}>
-                  <div style={{ fontSize: 12, opacity: 0.75, wordBreak: "break-all" }}>{p}</div>
-                  {medUrls[p] ? (
-                    <img
-                      src={medUrls[p]}
-                      alt="med"
-                      style={{ width: "100%", borderRadius: 12, marginTop: 8 }}
-                    />
-                  ) : (
-                    <div style={{ opacity: 0.8, marginTop: 8 }}>이미지 URL 생성중...</div>
-                  )}
-                  <button
-                    style={{ ...btnStyle, marginTop: 8 }}
-                    onClick={() => deleteMedFile(p)}
-                    disabled={medBusy}
-                  >
-                    삭제
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={cardStyle}>
-        <h2 style={h2Style}>최근 기록</h2>
-        {entries.length === 0 ? (
-          <div style={{ opacity: 0.8 }}>아직 기록이 없습니다. 위에서 하나 저장해보세요.</div>
-        ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            {entries.slice(0, 10).map((e) => (
-              <div key={e.id} style={{ border: "1px solid #333", borderRadius: 12, padding: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ fontSize: 18, fontWeight: 800 }}>{e.date}</div>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>{e.createdAt ?? ""}</div>
-                </div>
-
-                <div style={{ marginTop: 8, lineHeight: 1.8 }}>
-                  <div>체중: {e.weight || "-"}</div>
-                  <div>혈압: {e.bp_s || "-"} / {e.bp_d || "-"}</div>
-                  <div>운동(분): {e.exerciseMin || "-"}</div>
-                  <div>플랭크(분): {e.plankMin || "-"}</div>
-                  <div>무릎: {e.kneePain || "-"}</div>
-                </div>
-
-                <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                  <button style={btnStyle} onClick={() => startEdit(e)} disabled={loading}>
-                    수정
-                  </button>
-                  <button style={{ ...btnStyle, background: "#6b1f2a" }} onClick={() => deleteEntry(e)} disabled={loading}>
-                    삭제
-                  </button>
-                </div>
+        <input style={{...inputStyle, marginBottom: 10}} value={medTitle} onChange={(e) => setMedTitle(e.target.value)} placeholder="사진 제목" />
+        <label style={{ display: "inline-block" }}>
+          <input type="file" accept="image/*" multiple capture="environment" style={{ display: "none" }} onChange={(e) => uploadMedFiles(e.target.files)} disabled={medBusy} />
+          <button style={btnStyle} disabled={medBusy}>📷 사진 찍기 / 추가</button>
+        </label>
+        <div style={{ marginTop: 10, color: medStatus.includes("❌") ? "#ff6b6b" : "#4caf50" }}>{medStatus}</div>
+        
+        {(medDoc?.file_paths?.length ?? 0) > 0 && (
+          <div style={{ display: "grid", gap: 12, marginTop: 15 }}>
+            {(medDoc?.file_paths ?? []).map((p) => (
+              <div key={p} style={{ border: "1px solid #333", borderRadius: 12, padding: 10 }}>
+                {medUrls[p] ? <img src={medUrls[p]} alt="med" style={{ width: "100%", borderRadius: 12 }} /> : <div>이미지 불러오는 중...</div>}
+                <button style={{ ...btnStyle, marginTop: 8, width: "100%" }} onClick={() => deleteMedFile(p)} disabled={medBusy}>삭제</button>
               </div>
             ))}
           </div>
@@ -757,36 +569,7 @@ export default function Home() {
 }
 
 // ------------------- simple styles -------------------
-const cardStyle: React.CSSProperties = {
-  border: "1px solid #333",
-  borderRadius: 18,
-  padding: 16,
-  marginTop: 14,
-  background: "rgba(0,0,0,0.25)",
-};
-
-const h2Style: React.CSSProperties = {
-  marginTop: 0,
-  marginBottom: 10,
-  fontSize: 20,
-  fontWeight: 800,
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "12px 12px",
-  borderRadius: 12,
-  border: "1px solid #333",
-  background: "rgba(0,0,0,0.35)",
-  color: "#eee",
-  outline: "none",
-};
-
-const btnStyle: React.CSSProperties = {
-  padding: "12px 14px",
-  borderRadius: 12,
-  border: "1px solid #333",
-  background: "rgba(255,255,255,0.08)",
-  color: "#eee",
-  cursor: "pointer",
-};
+const cardStyle: React.CSSProperties = { border: "1px solid #333", borderRadius: 18, padding: 16, marginTop: 14, background: "rgba(0,0,0,0.25)" };
+const h2Style: React.CSSProperties = { marginTop: 0, marginBottom: 10, fontSize: 20, fontWeight: 800 };
+const inputStyle: React.CSSProperties = { width: "100%", padding: "12px 12px", borderRadius: 12, border: "1px solid #333", background: "rgba(0,0,0,0.35)", color: "#eee", boxSizing: "border-box" };
+const btnStyle: React.CSSProperties = { padding: "12px 14px", borderRadius: 12, border: "1px solid #333", background: "rgba(255,255,255,0.08)", color: "#eee", cursor: "pointer", width: "100%" };
