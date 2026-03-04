@@ -3,6 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient, type Session } from "@supabase/supabase-js";
 
+/** =========================
+ *  Supabase Client
+ *  ========================= */
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: true, autoRefreshToken: true },
+});
+
+const TABLE = "body_entries";
+
 type EntryRow = {
   id: string;
   user_id: string;
@@ -12,564 +23,556 @@ type EntryRow = {
   bp_d: number | null;
   exercise_min: number | null;
   plank_min: number | null;
-  knee_pain: number | null; // 0-10
+  knee_pain: number | null;
   notes: string | null;
   created_at: string;
 };
 
-type Entry = {
-  id: string;
-  date: string;
-  weight: string;
-  bp_s: string;
-  bp_d: string;
-  exerciseMin: string;
-  plankMin: string;
-  kneePain: string;
-  notes: string;
-  createdAt?: string;
-};
-
-type MedDocRow = {
-  id: string;
-  user_id: string;
-  title: string | null;
-  file_paths: string[] | null;
-  created_at: string;
-  updated_at: string;
-};
-
 function todayYMD() {
   const d = new Date();
+  // local date -> YYYY-MM-DD (local)
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
-function toNumOrNull(v: string) {
-  const s = (v ?? "").toString().trim();
-  if (!s) return null;
-  const n = Number(s);
+function toNumOrNull(v: string): number | null {
+  const t = (v ?? "").trim();
+  if (!t) return null;
+  const n = Number(t);
   return Number.isFinite(n) ? n : null;
 }
 
-function safeFileName(name: string) {
-  return (name || "file")
-    .replace(/\s+/g, "_")
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .slice(0, 140);
+function fmtDT(dt: string) {
+  const d = new Date(dt);
+  if (Number.isNaN(d.getTime())) return dt;
+  return d.toLocaleString();
 }
 
-const MED_BUCKET = "meddocs";
-
-// ✅ Supabase client (persistSession 추가하여 로그인 유지 강화)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-  }
-});
-
 export default function Home() {
+  /** =========================
+   *  Auth state
+   *  ========================= */
+  const [session, setSession] = useState<Session | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+
+  // login form
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
-  const [session, setSession] = useState<Session | null>(null);
+
+  /** =========================
+   *  Data state
+   *  ========================= */
+  const [entries, setEntries] = useState<EntryRow[]>([]);
+  const [loadingList, setLoadingList] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // form fields
+  const [date, setDate] = useState(todayYMD());
+  const [weight, setWeight] = useState("");
+  const [bpS, setBpS] = useState("");
+  const [bpD, setBpD] = useState("");
+  const [exerciseMin, setExerciseMin] = useState("");
+  const [plankMin, setPlankMin] = useState("");
+  const [kneePain, setKneePain] = useState("0");
+  const [notes, setNotes] = useState("");
+
   const userId = session?.user?.id ?? null;
 
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState(() => ({
-    date: todayYMD(),
-    weight: "",
-    bp_s: "",
-    bp_d: "",
-    exerciseMin: "",
-    plankMin: "",
-    kneePain: "0",
-    notes: "",
-  }));
-  const [editing, setEditing] = useState<{ id: string; originalDate: string } | null>(null);
+  /** =========================
+   *  Styles (LIGHT THEME)
+   *  ========================= */
+  const pageStyle: React.CSSProperties = {
+    minHeight: "100vh",
+    background: "#f6f7fb",
+    color: "#111",
+    padding: 18,
+    display: "flex",
+    justifyContent: "center",
+  };
 
-  const [medTitle, setMedTitle] = useState("");
-  const [medDoc, setMedDoc] = useState<MedDocRow | null>(null);
-  const [medUrls, setMedUrls] = useState<Record<string, string>>({});
-  const [medBusy, setMedBusy] = useState(false);
-  const [medStatus, setMedStatus] = useState("");
+  const wrapStyle: React.CSSProperties = {
+    width: "100%",
+    maxWidth: 560,
+  };
 
-  // ------------------- Auth bootstrap -------------------
+  const cardStyle: React.CSSProperties = {
+    background: "#ffffff",
+    border: "1px solid rgba(0,0,0,0.10)",
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 14,
+    boxShadow: "0 6px 18px rgba(0,0,0,0.08)",
+  };
+
+  const h2Style: React.CSSProperties = {
+    fontSize: 22,
+    fontWeight: 900,
+    margin: 0,
+    marginBottom: 10,
+  };
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 13,
+    opacity: 0.75,
+    marginBottom: 6,
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "14px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.14)",
+    background: "#ffffff",
+    color: "#111",
+    outline: "none",
+    fontSize: 18,
+  };
+
+  const row2Style: React.CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 10,
+  };
+
+  const btnStyle: React.CSSProperties = {
+    padding: "12px 16px",
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.16)",
+    background: "#f3f4f6",
+    color: "#111",
+    fontSize: 16,
+    fontWeight: 800,
+    cursor: "pointer",
+    minWidth: 120,
+  };
+
+  const btnPrimaryStyle: React.CSSProperties = {
+    ...btnStyle,
+    background: "#111827",
+    color: "#fff",
+    border: "1px solid rgba(0,0,0,0.18)",
+  };
+
+  const btnDangerStyle: React.CSSProperties = {
+    ...btnStyle,
+    background: "#b91c1c",
+    color: "#fff",
+    border: "1px solid rgba(0,0,0,0.18)",
+  };
+
+  const smallText: React.CSSProperties = {
+    fontSize: 13,
+    opacity: 0.8,
+  };
+
+  /** =========================
+   *  Auth bootstrap
+   *  ========================= */
   useEffect(() => {
-    let mounted = true;
+    let alive = true;
 
-    async function bootstrap() {
+    (async () => {
       const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
+      if (!alive) return;
       setSession(data.session ?? null);
+    })();
 
-      if (data.session?.user?.id) {
-        await Promise.all([loadEntries(data.session.user.id), loadMedDoc(data.session.user.id)]);
-      }
-    }
-
-    bootstrap();
-
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      if (!mounted) return;
-      setSession(newSession);
-
-      const uid = newSession?.user?.id ?? null;
-      if (uid) {
-        await Promise.all([loadEntries(uid), loadMedDoc(uid)]);
-      } else {
-        setEntries([]);
-        setMedDoc(null);
-        setMedUrls({});
-      }
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
+      setSession(sess ?? null);
     });
 
     return () => {
-      mounted = false;
+      alive = false;
       sub.subscription.unsubscribe();
     };
   }, []);
 
-  // ------------------- Auth actions -------------------
-  async function signIn() {
-    setLoading(true);
-    try {
-      const e = email.trim();
-      if (!e || !pw) {
-        alert("이메일과 비밀번호를 입력하세요.");
-        return;
-      }
-      const { error } = await supabase.auth.signInWithPassword({ email: e, password: pw });
-      if (error) throw error;
-      alert("로그인 성공!");
-    } catch (err: any) {
-      alert("로그인 실패: " + (err?.message ?? String(err)));
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function signUp() {
-    setLoading(true);
-    try {
-      const e = email.trim();
-      if (!e || !pw) {
-        alert("이메일과 비밀번호를 입력하세요.");
-        return;
-      }
-      const { error } = await supabase.auth.signUp({ email: e, password: pw });
-      if (error) throw error;
-      alert("가입 완료! 이제 로그인하세요.");
-    } catch (err: any) {
-      alert("가입 실패: " + (err?.message ?? String(err)));
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function signOut() {
-    setLoading(true);
-    try {
-      await supabase.auth.signOut();
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // ------------------- DB: body_entries -------------------
-  async function loadEntries(uid: string) {
+  /** =========================
+   *  Fetch entries
+   *  ========================= */
+  async function fetchEntries(uid: string) {
+    setLoadingList(true);
     try {
       const { data, error } = await supabase
-        .from("body_entries")
-        .select("*")
+        .from(TABLE)
+        .select(
+          "id,user_id,date,weight,bp_s,bp_d,exercise_min,plank_min,knee_pain,notes,created_at"
+        )
         .eq("user_id", uid)
         .order("date", { ascending: false })
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-
-      const mapped: Entry[] = (data ?? []).map((r: any) => ({
-        id: r.id,
-        date: r.date ?? "",
-        weight: r.weight == null ? "" : String(r.weight),
-        bp_s: r.bp_s == null ? "" : String(r.bp_s),
-        bp_d: r.bp_d == null ? "" : String(r.bp_d),
-        exerciseMin: r.exercise_min == null ? "" : String(r.exercise_min),
-        plankMin: r.plank_min == null ? "" : String(r.plank_min),
-        kneePain: r.knee_pain == null ? "0" : String(r.knee_pain),
-        notes: r.notes ?? "",
-        createdAt: r.created_at ?? "",
-      }));
-
-      setEntries(mapped);
-    } catch (err: any) {
-      console.error("데이터 불러오기 실패:", err);
-    }
-  }
-
-  async function saveEntry() {
-    setLoading(true);
-    try {
-      if (!userId) {
-        alert("로그인이 필요합니다.");
-        return;
-      }
-      if (!form.date) {
-        alert("날짜를 입력하세요.");
-        return;
-      }
-
-      console.log("저장 시작...", form);
-
-      const payload: any = {
-        user_id: userId,
-        date: form.date,
-        weight: toNumOrNull(form.weight),
-        bp_s: toNumOrNull(form.bp_s),
-        bp_d: toNumOrNull(form.bp_d),
-        exercise_min: toNumOrNull(form.exerciseMin),
-        plank_min: toNumOrNull(form.plankMin),
-        knee_pain: toNumOrNull(form.kneePain) ?? 0,
-        notes: form.notes?.trim() ? form.notes.trim() : null,
-      };
-
-      // 1) 같은 날짜 기존 row 찾기
-      const { data: existing, error: findErr } = await supabase
-        .from("body_entries")
-        .select("id")
-        .eq("user_id", userId)
-        .eq("date", form.date)
-        .limit(1);
-
-      if (findErr) throw findErr;
-
-      if (existing && existing.length > 0) {
-        const id = existing[0].id;
-        const { error: updErr } = await supabase.from("body_entries").update(payload).eq("id", id);
-        if (updErr) throw updErr;
-      } else {
-        const { error: insErr } = await supabase.from("body_entries").insert(payload);
-        if (insErr) throw insErr;
-      }
-
-      await loadEntries(userId);
-
-      setForm((p) => ({
-        ...p,
-        date: todayYMD(),
-        weight: "",
-        bp_s: "",
-        bp_d: "",
-        exerciseMin: "",
-        plankMin: "",
-        kneePain: "0",
-        notes: "",
-      }));
-      setEditing(null);
-      alert("저장되었습니다!");
-    } catch (err: any) {
-      console.error("저장 실패 에러:", err);
-      alert("저장 실패: " + (err?.message ?? String(err)));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function startEdit(e: Entry) {
-    setEditing({ id: e.id, originalDate: e.date });
-    setForm({
-      date: e.date,
-      weight: e.weight ?? "",
-      bp_s: e.bp_s ?? "",
-      bp_d: e.bp_d ?? "",
-      exerciseMin: e.exerciseMin ?? "",
-      plankMin: e.plankMin ?? "",
-      kneePain: e.kneePain ?? "0",
-      notes: e.notes ?? "",
-    });
-  }
-
-  function cancelEdit() {
-    setEditing(null);
-    setForm((p) => ({
-      ...p,
-      date: todayYMD(),
-      weight: "",
-      bp_s: "",
-      bp_d: "",
-      exerciseMin: "",
-      plankMin: "",
-      kneePain: "0",
-      notes: "",
-    }));
-  }
-
-  async function deleteEntry(e: Entry) {
-    const ok = confirm(`${e.date} 기록을 삭제할까요?`);
-    if (!ok) return;
-
-    setLoading(true);
-    try {
-      if (!userId) return;
-      const { error } = await supabase.from("body_entries").delete().eq("id", e.id);
-      if (error) throw error;
-
-      if (editing?.id === e.id) cancelEdit();
-      await loadEntries(userId);
-    } catch (err: any) {
-      alert("삭제 실패: " + (err?.message ?? String(err)));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // ------------------- DB: med_docs + Storage -------------------
-  async function loadMedDoc(uid: string) {
-    try {
-      const { data, error } = await supabase
-        .from("med_docs")
-        .select("*")
-        .eq("user_id", uid)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (error) throw error;
-
-      const doc = data?.[0] ?? null;
-      setMedDoc(doc);
-      setMedTitle(doc?.title ?? "");
-
-      const paths = doc?.file_paths ?? [];
-      await refreshMedSignedUrls(paths);
-    } catch (err: any) {
-      console.error("문서 불러오기 실패:", err);
-    }
-  }
-
-  async function ensureMedDoc(uid: string) {
-    const { data, error } = await supabase
-      .from("med_docs")
-      .select("*")
-      .eq("user_id", uid)
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (error) throw error;
-    if (data && data.length > 0) return data[0] as MedDocRow;
-
-    const { data: created, error: insErr } = await supabase
-      .from("med_docs")
-      .insert({ user_id: uid, title: null, file_paths: [] })
-      .select("*")
-      .single();
-
-    if (insErr) throw insErr;
-    return created as MedDocRow;
-  }
-
-  async function refreshMedSignedUrls(paths: string[]) {
-    const next: Record<string, string> = {};
-    for (const p of paths) {
-      const { data, error } = await supabase.storage.from(MED_BUCKET).createSignedUrl(p, 60 * 60);
-      if (!error && data?.signedUrl) next[p] = data.signedUrl;
-    }
-    setMedUrls(next);
-  }
-
-  async function uploadMedFiles(files: FileList | null) {
-    try {
-      if (!files || files.length === 0) return;
-      if (!userId) {
-        alert("로그인이 필요합니다.");
-        return;
-      }
-
-      setMedBusy(true);
-      setMedStatus("파일 업로드 중...");
-
-      let doc = medDoc;
-      if (!doc) {
-        doc = await ensureMedDoc(userId);
-        setMedDoc(doc);
-      }
-
-      const newPaths: string[] = [];
-
-      for (const file of Array.from(files)) {
-        const cleaned = safeFileName(file.name);
-        const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${cleaned}`;
-        const path = `${userId}/${doc.id}/${fileName}`;
-
-        const { error: upErr } = await supabase.storage
-          .from(MED_BUCKET)
-          .upload(path, file, { upsert: true, contentType: file.type });
-
-        if (upErr) {
-          console.error("Storage 업로드 에러:", upErr);
-          throw upErr;
-        }
-        newPaths.push(path);
-      }
-
-      setMedStatus("DB 업데이트 중...");
-      const merged = [...(doc.file_paths ?? []), ...newPaths];
-
-      const updatePayload: any = {
-        file_paths: merged,
-      };
-      if (medTitle.trim()) updatePayload.title = medTitle.trim();
-
-      const { data: upd, error: updErr } = await supabase
-        .from("med_docs")
-        .update(updatePayload)
-        .eq("id", doc.id)
-        .select("*")
-        .single();
-
-      if (updErr) {
-        console.error("DB 업데이트 에러:", updErr);
-        throw updErr;
-      }
-
-      const updatedDoc = upd as MedDocRow;
-      setMedDoc(updatedDoc);
-      await refreshMedSignedUrls(updatedDoc.file_paths ?? []);
-
-      setMedStatus("✅ 사진 저장 완료!");
-      setTimeout(() => setMedStatus(""), 2500);
+      setEntries((data as EntryRow[]) ?? []);
     } catch (e: any) {
-      console.error("업로드 예외:", e);
-      setMedStatus("❌ 저장 실패: " + e.message);
-    } finally {
-      setMedBusy(false);
-    }
-  }
-
-  async function deleteMedFile(path: string) {
-    if (!medDoc) return;
-    const ok = confirm("이 사진을 삭제할까요?");
-    if (!ok) return;
-
-    try {
-      if (!userId) return;
-      setMedBusy(true);
-
-      const { error: delErr } = await supabase.storage.from(MED_BUCKET).remove([path]);
-      if (delErr) throw delErr;
-
-      const nextPaths = (medDoc.file_paths ?? []).filter((p) => p !== path);
-
-      const { data: upd, error: updErr } = await supabase
-        .from("med_docs")
-        .update({ file_paths: nextPaths })
-        .eq("id", medDoc.id)
-        .select("*")
-        .single();
-
-      if (updErr) throw updErr;
-
-      const updatedDoc = upd as MedDocRow;
-      setMedDoc(updatedDoc);
-      await refreshMedSignedUrls(updatedDoc.file_paths ?? []);
-    } catch (e: any) {
-      alert("삭제 실패: " + (e?.message ?? String(e)));
       console.error(e);
+      alert("목록 불러오기 실패: " + (e?.message ?? String(e)));
     } finally {
-      setMedBusy(false);
+      setLoadingList(false);
     }
   }
 
-  const latest = useMemo(() => entries?.[0] ?? null, [entries]);
+  useEffect(() => {
+    if (!userId) {
+      setEntries([]);
+      return;
+    }
+    fetchEntries(userId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
-  // ------------------- UI -------------------
+  /** =========================
+   *  Auth actions
+   *  ========================= */
+  async function signUp() {
+    setAuthBusy(true);
+    try {
+      const { error } = await supabase.auth.signUp({ email, password: pw });
+      if (error) throw error;
+      alert("가입 요청 완료! 이메일 확인(Confirm) 후 로그인하세요.");
+    } catch (e: any) {
+      console.error(e);
+      alert("가입 실패: " + (e?.message ?? String(e)));
+    } finally {
+      setAuthBusy(false);
+      // 모바일 자동완성/포커스 문제 방지
+      setEmail("");
+      setPw("");
+      setTimeout(() => {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+      }, 0);
+    }
+  }
+
+  async function signIn() {
+    setAuthBusy(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password: pw,
+      });
+      if (error) throw error;
+    } catch (e: any) {
+      console.error(e);
+      alert("로그인 실패: " + (e?.message ?? String(e)));
+    } finally {
+      setAuthBusy(false);
+      setEmail("");
+      setPw("");
+      setTimeout(() => {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+      }, 0);
+    }
+  }
+
+  async function signOut() {
+    setAuthBusy(true);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      alert("로그아웃 완료");
+    } catch (e: any) {
+      console.error(e);
+      alert("로그아웃 실패: " + (e?.message ?? String(e)));
+    } finally {
+      setAuthBusy(false);
+      setEmail("");
+      setPw("");
+    }
+  }
+
+  /** =========================
+   *  Save entry
+   *  ========================= */
+  async function saveEntry() {
+    if (!userId) {
+      alert("먼저 로그인하세요.");
+      return;
+    }
+    if (!date) {
+      alert("날짜를 입력하세요.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const payload = {
+        user_id: userId,
+        date,
+        weight: toNumOrNull(weight),
+        bp_s: toNumOrNull(bpS),
+        bp_d: toNumOrNull(bpD),
+        exercise_min: toNumOrNull(exerciseMin),
+        plank_min: toNumOrNull(plankMin),
+        knee_pain: toNumOrNull(kneePain),
+        notes: notes.trim() ? notes.trim() : null,
+      };
+
+      const { error } = await supabase.from(TABLE).insert(payload);
+      if (error) throw error;
+
+      // 폼 리셋
+      setWeight("");
+      setBpS("");
+      setBpD("");
+      setExerciseMin("");
+      setPlankMin("");
+      setKneePain("0");
+      setNotes("");
+
+      await fetchEntries(userId);
+    } catch (e: any) {
+      console.error(e);
+      alert("저장 실패: " + (e?.message ?? String(e)));
+    } finally {
+      // ✅ 어떤 경우에도 “처리중” 해제
+      setSaving(false);
+      setTimeout(() => {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+      }, 0);
+    }
+  }
+
+  /** =========================
+   *  Summary
+   *  ========================= */
+  const latest = useMemo(() => {
+    if (!entries.length) return null;
+    return entries[0];
+  }, [entries]);
+
+  /** =========================
+   *  UI
+   *  ========================= */
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto", padding: 16, color: "#eee", fontFamily: "sans-serif" }}>
-      <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>Body Notebook</h1>
-      <p style={{ opacity: 0.8, marginTop: 0 }}>건강/운동/무릎 통증을 기록해봅시다.</p>
+    <div style={pageStyle}>
+      <div style={wrapStyle}>
+        <h1 style={{ fontSize: 34, fontWeight: 950, margin: 0 }}>
+          Body Notebook
+        </h1>
+        <p style={{ marginTop: 6, marginBottom: 0, opacity: 0.85 }}>
+          건강/운동/무릎 통증을 기록해봅시다.
+        </p>
 
-      <div style={cardStyle}>
-        <h2 style={h2Style}>로그인 (이메일로 로그인)</h2>
-        <div style={{ display: "grid", gap: 10 }}>
-          <input style={inputStyle} placeholder="이메일" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
-          <input style={inputStyle} placeholder="비밀번호" value={pw} onChange={(e) => setPw(e.target.value)} type="password" autoComplete="current-password" />
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button style={btnStyle} onClick={signIn} disabled={loading}>로그인</button>
-            <button style={btnStyle} onClick={signUp} disabled={loading}>가입</button>
-            <button style={btnStyle} onClick={signOut} disabled={loading || !session}>로그아웃</button>
-          </div>
-          <div style={{ opacity: 0.85, fontSize: 14 }}>현재: {session?.user?.email ?? "로그인 전"}</div>
-        </div>
-      </div>
+        {/* Account */}
+        <div style={cardStyle}>
+          <h2 style={h2Style}>계정</h2>
 
-      <div style={cardStyle}>
-        <h2 style={h2Style}>요약</h2>
-        {latest ? (
-          <div style={{ lineHeight: 1.7 }}>
-            <div>Latest: <b>{latest.date}</b></div>
-            <div>Weight: {latest.weight || "-"}</div>
-            <div>Blood Pressure: {latest.bp_s || "-"} / {latest.bp_d || "-"}</div>
-            <div>Exercise (min): {latest.exerciseMin || "-"}</div>
-            <div>Plank (min): {latest.plankMin || "-"}</div>
-            <div>Knee pain (0-10): {latest.kneePain || "-"}</div>
-          </div>
-        ) : (
-          <div style={{ opacity: 0.8 }}>No entries yet</div>
-        )}
-      </div>
+          {session ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={smallText}>현재: {session.user.email ?? "(unknown)"}</div>
+              <button
+                style={btnDangerStyle}
+                onClick={signOut}
+                disabled={authBusy}
+              >
+                {authBusy ? "처리중..." : "로그아웃"}
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={labelStyle}>로그인 (이메일로 로그인)</div>
 
-      <div style={cardStyle}>
-        <h2 style={h2Style}>{editing ? "기록 수정" : "새 기록"}</h2>
-        <div style={{ display: "grid", gap: 10 }}>
-          <input style={inputStyle} value={form.date} onChange={(e) => setForm((p) => ({ ...p, date: e.target.value }))} placeholder="YYYY-MM-DD" />
-          <input style={inputStyle} value={form.weight} onChange={(e) => setForm((p) => ({ ...p, weight: e.target.value }))} placeholder="체중 (예: 165.7)" />
-          <div style={{ display: "flex", gap: 10 }}>
-            <input style={inputStyle} value={form.bp_s} onChange={(e) => setForm((p) => ({ ...p, bp_s: e.target.value }))} placeholder="혈압 S" />
-            <input style={inputStyle} value={form.bp_d} onChange={(e) => setForm((p) => ({ ...p, bp_d: e.target.value }))} placeholder="혈압 D" />
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <input style={inputStyle} value={form.exerciseMin} onChange={(e) => setForm((p) => ({ ...p, exerciseMin: e.target.value }))} placeholder="운동(분)" />
-            <input style={inputStyle} value={form.plankMin} onChange={(e) => setForm((p) => ({ ...p, plankMin: e.target.value }))} placeholder="플랭크(분)" />
-          </div>
-          <input style={inputStyle} value={form.kneePain} onChange={(e) => setForm((p) => ({ ...p, kneePain: e.target.value }))} placeholder="무릎통증 0~10" />
-          <input style={inputStyle} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} placeholder="메모" />
-          <button style={btnStyle} onClick={saveEntry} disabled={loading}>{loading ? "처리 중..." : editing ? "수정 저장" : "저장"}</button>
-          {editing && <button style={btnStyle} onClick={cancelEdit} disabled={loading}>수정 취소</button>}
-        </div>
-      </div>
+              <input
+                style={inputStyle}
+                placeholder="이메일"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="username"
+                inputMode="email"
+              />
+              <input
+                style={inputStyle}
+                placeholder="비밀번호"
+                type="password"
+                value={pw}
+                onChange={(e) => setPw(e.target.value)}
+                autoComplete="current-password"
+              />
 
-      <div style={cardStyle}>
-        <h2 style={h2Style}>처방약/영양제 (사진 보관)</h2>
-        <input style={{...inputStyle, marginBottom: 10}} value={medTitle} onChange={(e) => setMedTitle(e.target.value)} placeholder="사진 제목" />
-        <label style={{ display: "inline-block" }}>
-          <input type="file" accept="image/*" multiple capture="environment" style={{ display: "none" }} onChange={(e) => uploadMedFiles(e.target.files)} disabled={medBusy} />
-          <button style={btnStyle} disabled={medBusy}>📷 사진 찍기 / 추가</button>
-        </label>
-        <div style={{ marginTop: 10, color: medStatus.includes("❌") ? "#ff6b6b" : "#4caf50" }}>{medStatus}</div>
-        
-        {(medDoc?.file_paths?.length ?? 0) > 0 && (
-          <div style={{ display: "grid", gap: 12, marginTop: 15 }}>
-            {(medDoc?.file_paths ?? []).map((p) => (
-              <div key={p} style={{ border: "1px solid #333", borderRadius: 12, padding: 10 }}>
-                {medUrls[p] ? <img src={medUrls[p]} alt="med" style={{ width: "100%", borderRadius: 12 }} /> : <div>이미지 불러오는 중...</div>}
-                <button style={{ ...btnStyle, marginTop: 8, width: "100%" }} onClick={() => deleteMedFile(p)} disabled={medBusy}>삭제</button>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  style={btnPrimaryStyle}
+                  onClick={signIn}
+                  disabled={authBusy}
+                >
+                  {authBusy ? "처리중..." : "로그인"}
+                </button>
+                <button style={btnStyle} onClick={signUp} disabled={authBusy}>
+                  {authBusy ? "처리중..." : "가입"}
+                </button>
               </div>
-            ))}
+
+              <div style={smallText}>
+                가입 후 이메일에서 Confirm을 눌러야 로그인이 됩니다.
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Summary */}
+        <div style={cardStyle}>
+          <h2 style={h2Style}>요약</h2>
+
+          {!userId ? (
+            <div style={smallText}>로그인하면 요약/최근기록이 보입니다.</div>
+          ) : loadingList ? (
+            <div style={smallText}>불러오는 중...</div>
+          ) : !latest ? (
+            <div style={smallText}>No entries yet</div>
+          ) : (
+            <div style={{ lineHeight: 1.7 }}>
+              <div>
+                Latest: <b>{latest.date}</b>
+              </div>
+              <div>Weight: {latest.weight ?? "-"}</div>
+              <div>
+                Blood Pressure: {latest.bp_s ?? "-"} / {latest.bp_d ?? "-"}
+              </div>
+              <div>Exercise: {latest.exercise_min ?? 0} min</div>
+              <div>Plank: {latest.plank_min ?? 0} min</div>
+              <div>Knee pain: {latest.knee_pain ?? 0}</div>
+            </div>
+          )}
+        </div>
+
+        {/* New entry (BEFORE recent list) */}
+        <div style={cardStyle}>
+          <h2 style={h2Style}>새 기록</h2>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            <input
+              style={inputStyle}
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+
+            <input
+              style={inputStyle}
+              placeholder="체중 (예: 165.7)"
+              value={weight}
+              onChange={(e) => setWeight(e.target.value)}
+              inputMode="decimal"
+            />
+
+            <div style={row2Style}>
+              <input
+                style={inputStyle}
+                placeholder="혈압 S"
+                value={bpS}
+                onChange={(e) => setBpS(e.target.value)}
+                inputMode="numeric"
+              />
+              <input
+                style={inputStyle}
+                placeholder="혈압 D"
+                value={bpD}
+                onChange={(e) => setBpD(e.target.value)}
+                inputMode="numeric"
+              />
+            </div>
+
+            <div style={row2Style}>
+              <input
+                style={inputStyle}
+                placeholder="운동(분)"
+                value={exerciseMin}
+                onChange={(e) => setExerciseMin(e.target.value)}
+                inputMode="numeric"
+              />
+              <input
+                style={inputStyle}
+                placeholder="플랭크(분)"
+                value={plankMin}
+                onChange={(e) => setPlankMin(e.target.value)}
+                inputMode="numeric"
+              />
+            </div>
+
+            <input
+              style={inputStyle}
+              placeholder="무릎통증 (0~10)"
+              value={kneePain}
+              onChange={(e) => setKneePain(e.target.value)}
+              inputMode="numeric"
+            />
+
+            <input
+              style={inputStyle}
+              placeholder="메모"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+
+            <button
+              style={btnPrimaryStyle}
+              onClick={saveEntry}
+              disabled={saving || !userId}
+            >
+              {saving ? "처리중..." : "저장"}
+            </button>
+
+            {!userId ? (
+              <div style={smallText}>저장하려면 로그인해야 합니다.</div>
+            ) : null}
           </div>
-        )}
+        </div>
+
+        {/* Recent entries list (BOTTOM) */}
+        <div style={cardStyle}>
+          <h2 style={h2Style}>최근 기록</h2>
+
+          {!userId ? (
+            <div style={smallText}>로그인 후 확인 가능합니다.</div>
+          ) : loadingList ? (
+            <div style={smallText}>불러오는 중...</div>
+          ) : entries.length === 0 ? (
+            <div style={smallText}>기록이 없습니다.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {entries.slice(0, 50).map((r) => (
+                <div
+                  key={r.id}
+                  style={{
+                    border: "1px solid rgba(0,0,0,0.10)",
+                    borderRadius: 14,
+                    padding: 12,
+                    background: "#ffffff",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      alignItems: "baseline",
+                    }}
+                  >
+                    <div style={{ fontWeight: 950 }}>{r.date}</div>
+                    <div style={{ fontSize: 13, opacity: 0.7 }}>
+                      {fmtDT(r.created_at)}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 6, opacity: 0.95, lineHeight: 1.7 }}>
+                    <div>체중: {r.weight ?? "-"}</div>
+                    <div>혈압: {r.bp_s ?? "-"} / {r.bp_d ?? "-"}</div>
+                    <div>운동: {r.exercise_min ?? 0}분</div>
+                    <div>플랭크: {r.plank_min ?? 0}분</div>
+                    <div>무릎통증: {r.knee_pain ?? 0}</div>
+                    {r.notes ? <div>메모: {r.notes}</div> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ height: 26 }} />
       </div>
     </div>
   );
 }
-
-// ------------------- simple styles -------------------
-const cardStyle: React.CSSProperties = { border: "1px solid #333", borderRadius: 18, padding: 16, marginTop: 14, background: "rgba(0,0,0,0.25)" };
-const h2Style: React.CSSProperties = { marginTop: 0, marginBottom: 10, fontSize: 20, fontWeight: 800 };
-const inputStyle: React.CSSProperties = { width: "100%", padding: "12px 12px", borderRadius: 12, border: "1px solid #333", background: "rgba(0,0,0,0.35)", color: "#eee", boxSizing: "border-box" };
-const btnStyle: React.CSSProperties = { padding: "12px 14px", borderRadius: 12, border: "1px solid #333", background: "rgba(255,255,255,0.08)", color: "#eee", cursor: "pointer", width: "100%" };
