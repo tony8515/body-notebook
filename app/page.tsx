@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { getSupabase } from "@/lib/supabase";
+
 const supabase = getSupabase();
 const TABLE = "body_entries";
 
@@ -45,10 +46,93 @@ function intOrNull(v: string) {
 }
 
 function toLocalDateTime(s: string) {
-  // Supabase timestamptz → 브라우저 로컬 시간
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return s;
   return d.toLocaleString();
+}
+
+/** -------------------------------------------------------
+ *  SVG Weight Chart (no external libs)
+ *  ------------------------------------------------------ */
+function WeightChart({ points }: { points: WeightPoint[] }) {
+  // 안전장치
+  if (!points || points.length < 2) return null;
+
+  const W = 640;
+  const H = 220;
+  const padL = 44;
+  const padR = 18;
+  const padT = 16;
+  const padB = 34;
+
+  const ys = points.map((p) => p.weight);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const span = Math.max(0.0001, maxY - minY);
+
+  // 위/아래 여백 10%
+  const yMin = minY - span * 0.1;
+  const yMax = maxY + span * 0.1;
+
+  const x0 = padL;
+  const x1 = W - padR;
+  const y0 = H - padB;
+  const y1 = padT;
+
+  const n = points.length;
+  const xStep = n === 1 ? 0 : (x1 - x0) / (n - 1);
+
+  const toX = (i: number) => x0 + i * xStep;
+  const toY = (v: number) => y0 - ((v - yMin) / (yMax - yMin)) * (y0 - y1);
+
+  const d = points
+    .map(
+      (p, i) =>
+        `${i === 0 ? "M" : "L"} ${toX(i).toFixed(2)} ${toY(p.weight).toFixed(2)}`
+    )
+    .join(" ");
+
+  const ticks = [yMin, (yMin + yMax) / 2, yMax];
+
+  const first = points[0].date;
+  const last = points[n - 1].date;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="190" role="img" aria-label="체중 그래프">
+      {/* axes */}
+      <line x1={x0} y1={y1} x2={x0} y2={y0} stroke="rgba(0,0,0,0.35)" strokeWidth="1" />
+      <line x1={x0} y1={y0} x2={x1} y2={y0} stroke="rgba(0,0,0,0.35)" strokeWidth="1" />
+
+      {/* y ticks */}
+      {ticks.map((t, idx) => {
+        const y = toY(t);
+        return (
+          <g key={idx}>
+            <line x1={x0} y1={y} x2={x1} y2={y} stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
+            <text x={x0 - 10} y={y + 4} textAnchor="end" fontSize="12" fill="rgba(0,0,0,0.65)">
+              {t.toFixed(1)}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* line */}
+      <path d={d} fill="none" stroke="#111" strokeWidth="2.5" />
+
+      {/* points */}
+      {points.map((p, i) => (
+        <circle key={`${p.date}-${i}`} cx={toX(i)} cy={toY(p.weight)} r="3.2" fill="#111" />
+      ))}
+
+      {/* x labels */}
+      <text x={x0} y={H - 10} textAnchor="start" fontSize="12" fill="rgba(0,0,0,0.65)">
+        {first}
+      </text>
+      <text x={x1} y={H - 10} textAnchor="end" fontSize="12" fill="rgba(0,0,0,0.65)">
+        {last}
+      </text>
+    </svg>
+  );
 }
 
 export default function Home() {
@@ -267,8 +351,6 @@ export default function Home() {
       // ✅ PC/폰 모두 로그인 성공 시 입력값 비우기
       setEmail("");
       setPw("");
-
-      // 목록은 useEffect(userId)에서 자동 로드됨
     } catch (e: any) {
       console.error(e);
       alert("로그인 실패: " + (e?.message ?? String(e)));
@@ -282,15 +364,7 @@ export default function Home() {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      setEditingId(null);
-      setDate(todayYMD());
-      setWeight("");
-      setBpS("");
-      setBpD("");
-      setExerciseMin("");
-      setPlankMin("");
-      setKneePain("0");
-      setNotes("");
+      cancelEdit();
     } catch (e: any) {
       console.error(e);
       alert("로그아웃 실패: " + (e?.message ?? String(e)));
@@ -304,25 +378,24 @@ export default function Home() {
    *  ========================= */
   const latest = useMemo(() => {
     if (!entries.length) return null;
-    // date desc + created_at desc로 받아오므로 0번이 최신
     return entries[0];
   }, [entries]);
 
   /** =========================
-   *  Weight points for chart
+   *  Weight points for chart  ✅(중요: string weight도 trim+Number 변환)
    *  ========================= */
   const weightPoints = useMemo<WeightPoint[]>(() => {
-    const pts = entries
+    const pts = (entries ?? [])
       .map((e) => {
         const raw = e.weight;
         const w =
-          typeof raw === "number"
+          raw == null
+            ? NaN
+            : typeof raw === "number"
             ? raw
-            : typeof raw === "string"
-            ? Number(raw)
-            : NaN;
+            : Number(String(raw).trim());
 
-        // 0 이하면 그래프에서 제외 (원치 않으면 이 줄 지워도 됨)
+        // ✅ 유효한 숫자만
         return Number.isFinite(w) && w > 0 ? { date: e.date, weight: w } : null;
       })
       .filter(Boolean) as WeightPoint[];
@@ -347,7 +420,6 @@ export default function Home() {
     setPlankMin(row.plank_min == null ? "" : String(row.plank_min));
     setKneePain(row.knee_pain == null ? "0" : String(row.knee_pain));
     setNotes(row.notes ?? "");
-    // 화면 위쪽 폼으로 시선 이동(모바일)
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -369,7 +441,6 @@ export default function Home() {
       return;
     }
 
-    // 최소 검증 (체중은 선택 입력 가능)
     if (!date) {
       alert("날짜를 입력하세요.");
       return;
@@ -397,7 +468,6 @@ export default function Home() {
         if (error) throw error;
       }
 
-      // 성공 후 초기화 + 재조회
       cancelEdit();
       await fetchEntries(userId);
     } catch (e: any) {
@@ -422,89 +492,6 @@ export default function Home() {
       alert("삭제 실패: " + (e?.message ?? String(e)));
     }
   }
-
-  /** =========================
-   *  Simple SVG chart renderer
-   *  ========================= */
-  const chart = useMemo(() => {
-    if (weightPoints.length < 2) return null;
-
-    const W = 640;
-    const H = 220;
-    const padL = 44;
-    const padR = 18;
-    const padT = 16;
-    const padB = 34;
-
-    const ys = weightPoints.map((p) => p.weight);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-
-    // 같은 값만 있을 때 대비 (0으로 나누기 방지)
-    const span = Math.max(0.0001, maxY - minY);
-    const yMin = minY - span * 0.1;
-    const yMax = maxY + span * 0.1;
-
-    const x0 = padL;
-    const x1 = W - padR;
-    const y0 = H - padB;
-    const y1 = padT;
-
-    const n = weightPoints.length;
-    const xStep = n === 1 ? 0 : (x1 - x0) / (n - 1);
-
-    const toX = (i: number) => x0 + i * xStep;
-    const toY = (v: number) => y0 - ((v - yMin) / (yMax - yMin)) * (y0 - y1);
-
-    const d = weightPoints
-      .map((p, i) => `${i === 0 ? "M" : "L"} ${toX(i).toFixed(2)} ${toY(p.weight).toFixed(2)}`)
-      .join(" ");
-
-    // y축 눈금 3개
-    const ticks = [yMin, (yMin + yMax) / 2, yMax];
-
-    const labelLeft = (v: number) => v.toFixed(1);
-
-    const first = weightPoints[0].date;
-    const last = weightPoints[n - 1].date;
-
-    return (
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="190" role="img" aria-label="체중 그래프">
-        {/* axes */}
-        <line x1={x0} y1={y1} x2={x0} y2={y0} stroke="rgba(0,0,0,0.35)" strokeWidth="1" />
-        <line x1={x0} y1={y0} x2={x1} y2={y0} stroke="rgba(0,0,0,0.35)" strokeWidth="1" />
-
-        {/* y ticks */}
-        {ticks.map((t, idx) => {
-          const y = toY(t);
-          return (
-            <g key={idx}>
-              <line x1={x0} y1={y} x2={x1} y2={y} stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
-              <text x={x0 - 10} y={y + 4} textAnchor="end" fontSize="12" fill="rgba(0,0,0,0.65)">
-                {labelLeft(t)}
-              </text>
-            </g>
-          );
-        })}
-
-        {/* line */}
-        <path d={d} fill="none" stroke="#111" strokeWidth="2.5" />
-
-        {/* points */}
-        {weightPoints.map((p, i) => (
-          <circle key={p.date} cx={toX(i)} cy={toY(p.weight)} r="3.2" fill="#111" />
-        ))}
-
-        {/* x labels */}
-        <text x={x0} y={H - 10} textAnchor="start" fontSize="12" fill="rgba(0,0,0,0.65)">
-          {first}
-        </text>
-        <text x={x1} y={H - 10} textAnchor="end" fontSize="12" fill="rgba(0,0,0,0.65)">
-          {last}
-        </text>
-      </svg>
-    );
-  }, [weightPoints]);
 
   /** =========================
    *  Render
@@ -592,16 +579,15 @@ export default function Home() {
 
         {/* Weight chart */}
         <div style={cardStyle}>
-          <h2 style={h2Style}>체중 그래프</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <h2 style={h2Style}>체중 그래프</h2>
+            <div style={{ ...muted }}>{weightPoints.length ? `최근 ${weightPoints.length}개 (최대 30)` : ""}</div>
+          </div>
+
           {weightPoints.length < 2 ? (
             <div style={muted}>체중 데이터가 2개 이상 있어야 그래프가 표시됩니다.</div>
           ) : (
-            <>
-              {chart}
-              <div style={{ ...muted, marginTop: 6 }}>
-                최근 {weightPoints.length}개 표시 (최대 30개)
-              </div>
-            </>
+            <WeightChart points={weightPoints} />
           )}
         </div>
 
@@ -617,12 +603,7 @@ export default function Home() {
           </div>
 
           <div style={{ display: "grid", gap: 10 }}>
-            <input
-              style={inputStyle}
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
+            <input style={inputStyle} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
 
             <input
               style={inputStyle}
@@ -674,12 +655,7 @@ export default function Home() {
               onChange={(e) => setKneePain(e.target.value)}
             />
 
-            <input
-              style={inputStyle}
-              placeholder="메모"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
+            <input style={inputStyle} placeholder="메모" value={notes} onChange={(e) => setNotes(e.target.value)} />
 
             <button style={btnStyle} onClick={saveEntry} disabled={saving || !userId}>
               {saving ? "처리중..." : editingId ? "수정 저장" : "저장"}
@@ -737,9 +713,7 @@ export default function Home() {
           )}
         </div>
 
-        <div style={{ ...muted, textAlign: "center", paddingBottom: 18 }}>
-          v1 • local + vercel + supabase
-        </div>
+        <div style={{ ...muted, textAlign: "center", paddingBottom: 18 }}>v1 • local + vercel + supabase</div>
       </div>
     </div>
   );
