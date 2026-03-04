@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
-
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { getSupabase } from "@/lib/supabase";
+const supabase = getSupabase();
 const TABLE = "body_entries";
 
 type EntryRow = {
@@ -85,7 +85,7 @@ export default function Home() {
   /** =========================
    *  Styles (LIGHT THEME)
    *  ========================= */
-  const pageStyle: React.CSSProperties = {
+  const pageStyle: CSSProperties = {
     minHeight: "100vh",
     background: "#f6f7fb",
     color: "#111",
@@ -94,25 +94,25 @@ export default function Home() {
     justifyContent: "center",
   };
 
-  const wrapStyle: React.CSSProperties = {
+  const wrapStyle: CSSProperties = {
     width: "100%",
     maxWidth: 520,
   };
 
-  const titleStyle: React.CSSProperties = {
+  const titleStyle: CSSProperties = {
     fontSize: 34,
     fontWeight: 900,
     margin: "12px 0 6px",
     letterSpacing: -0.5,
   };
 
-  const subStyle: React.CSSProperties = {
+  const subStyle: CSSProperties = {
     opacity: 0.75,
     marginTop: 0,
     marginBottom: 14,
   };
 
-  const cardStyle: React.CSSProperties = {
+  const cardStyle: CSSProperties = {
     background: "#fff",
     borderRadius: 16,
     padding: 14,
@@ -121,13 +121,13 @@ export default function Home() {
     border: "1px solid rgba(0,0,0,0.06)",
   };
 
-  const h2Style: React.CSSProperties = {
+  const h2Style: CSSProperties = {
     fontSize: 18,
     fontWeight: 900,
     margin: "0 0 10px",
   };
 
-  const inputStyle: React.CSSProperties = {
+  const inputStyle: CSSProperties = {
     width: "100%",
     padding: "12px 12px",
     borderRadius: 12,
@@ -138,13 +138,13 @@ export default function Home() {
     fontSize: 16,
   };
 
-  const grid2Style: React.CSSProperties = {
+  const grid2Style: CSSProperties = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: 10,
   };
 
-  const btnStyle: React.CSSProperties = {
+  const btnStyle: CSSProperties = {
     padding: "12px 14px",
     borderRadius: 12,
     border: "1px solid rgba(0,0,0,0.14)",
@@ -154,7 +154,7 @@ export default function Home() {
     cursor: "pointer",
   };
 
-  const btnGhostStyle: React.CSSProperties = {
+  const btnGhostStyle: CSSProperties = {
     padding: "10px 12px",
     borderRadius: 12,
     border: "1px solid rgba(0,0,0,0.14)",
@@ -164,13 +164,13 @@ export default function Home() {
     cursor: "pointer",
   };
 
-  const btnDangerStyle: React.CSSProperties = {
+  const btnDangerStyle: CSSProperties = {
     ...btnStyle,
     background: "#d32f2f",
     border: "1px solid rgba(0,0,0,0.08)",
   };
 
-  const btnSmallStyle: React.CSSProperties = {
+  const btnSmallStyle: CSSProperties = {
     padding: "8px 10px",
     borderRadius: 12,
     border: "1px solid rgba(0,0,0,0.14)",
@@ -181,12 +181,12 @@ export default function Home() {
     fontSize: 13,
   };
 
-  const btnSmallDangerStyle: React.CSSProperties = {
+  const btnSmallDangerStyle: CSSProperties = {
     ...btnSmallStyle,
     background: "#d32f2f",
   };
 
-  const muted: React.CSSProperties = { opacity: 0.75, fontSize: 13 };
+  const muted: CSSProperties = { opacity: 0.75, fontSize: 13 };
 
   /** =========================
    *  Auth bootstrap + listener
