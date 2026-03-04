@@ -30,7 +30,6 @@ type EntryRow = {
 
 function todayYMD() {
   const d = new Date();
-  // local date -> YYYY-MM-DD (local)
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -57,7 +56,6 @@ export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
 
-  // login form
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
 
@@ -67,6 +65,9 @@ export default function Home() {
   const [entries, setEntries] = useState<EntryRow[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // ✅ editing
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // form fields
   const [date, setDate] = useState(todayYMD());
@@ -162,10 +163,55 @@ export default function Home() {
     border: "1px solid rgba(0,0,0,0.18)",
   };
 
+  // 작은 버튼(카드 내부 수정/삭제용)
+  const btnMiniStyle: React.CSSProperties = {
+    padding: "8px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.16)",
+    background: "#f3f4f6",
+    color: "#111",
+    fontSize: 14,
+    fontWeight: 800,
+    cursor: "pointer",
+  };
+
+  const btnMiniPrimary: React.CSSProperties = {
+    ...btnMiniStyle,
+    background: "#111827",
+    color: "#fff",
+  };
+
+  const btnMiniDanger: React.CSSProperties = {
+    ...btnMiniStyle,
+    background: "#b91c1c",
+    color: "#fff",
+  };
+
   const smallText: React.CSSProperties = {
     fontSize: 13,
     opacity: 0.8,
   };
+
+  /** =========================
+   *  Helpers
+   *  ========================= */
+  function blurActive() {
+    setTimeout(() => {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+    }, 0);
+  }
+
+  function resetForm() {
+    setEditingId(null);
+    setDate(todayYMD());
+    setWeight("");
+    setBpS("");
+    setBpD("");
+    setExerciseMin("");
+    setPlankMin("");
+    setKneePain("0");
+    setNotes("");
+  }
 
   /** =========================
    *  Auth bootstrap
@@ -217,6 +263,7 @@ export default function Home() {
   useEffect(() => {
     if (!userId) {
       setEntries([]);
+      resetForm();
       return;
     }
     fetchEntries(userId);
@@ -237,12 +284,9 @@ export default function Home() {
       alert("가입 실패: " + (e?.message ?? String(e)));
     } finally {
       setAuthBusy(false);
-      // 모바일 자동완성/포커스 문제 방지
       setEmail("");
       setPw("");
-      setTimeout(() => {
-        (document.activeElement as HTMLElement | null)?.blur?.();
-      }, 0);
+      blurActive();
     }
   }
 
@@ -261,9 +305,7 @@ export default function Home() {
       setAuthBusy(false);
       setEmail("");
       setPw("");
-      setTimeout(() => {
-        (document.activeElement as HTMLElement | null)?.blur?.();
-      }, 0);
+      blurActive();
     }
   }
 
@@ -280,11 +322,56 @@ export default function Home() {
       setAuthBusy(false);
       setEmail("");
       setPw("");
+      resetForm();
     }
   }
 
   /** =========================
-   *  Save entry
+   *  Edit / Delete
+   *  ========================= */
+  function startEdit(r: EntryRow) {
+    setEditingId(r.id);
+    setDate(r.date);
+    setWeight(r.weight === null ? "" : String(r.weight));
+    setBpS(r.bp_s === null ? "" : String(r.bp_s));
+    setBpD(r.bp_d === null ? "" : String(r.bp_d));
+    setExerciseMin(r.exercise_min === null ? "" : String(r.exercise_min));
+    setPlankMin(r.plank_min === null ? "" : String(r.plank_min));
+    setKneePain(r.knee_pain === null ? "0" : String(r.knee_pain));
+    setNotes(r.notes ?? "");
+    // 위 폼으로 자연스럽게 이동 느낌(모바일)
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function deleteEntry(r: EntryRow) {
+    if (!userId) return;
+    const ok = confirm(`${r.date} 기록을 삭제할까요?`);
+    if (!ok) return;
+
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from(TABLE)
+        .delete()
+        .eq("id", r.id)
+        .eq("user_id", userId);
+
+      if (error) throw error;
+
+      // 삭제 중 수정하던 건이면 폼도 리셋
+      if (editingId === r.id) resetForm();
+
+      await fetchEntries(userId);
+    } catch (e: any) {
+      console.error(e);
+      alert("삭제 실패: " + (e?.message ?? String(e)));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** =========================
+   *  Save (INSERT or UPDATE)
    *  ========================= */
   async function saveEntry() {
     if (!userId) {
@@ -310,18 +397,23 @@ export default function Home() {
         notes: notes.trim() ? notes.trim() : null,
       };
 
-      const { error } = await supabase.from(TABLE).insert(payload);
-      if (error) throw error;
+      if (editingId) {
+        // ✅ UPDATE
+        const { error } = await supabase
+          .from(TABLE)
+          .update(payload)
+          .eq("id", editingId)
+          .eq("user_id", userId);
 
-      // 폼 리셋
-      setWeight("");
-      setBpS("");
-      setBpD("");
-      setExerciseMin("");
-      setPlankMin("");
-      setKneePain("0");
-      setNotes("");
+        if (error) throw error;
+        alert("수정 저장 완료");
+      } else {
+        // ✅ INSERT
+        const { error } = await supabase.from(TABLE).insert(payload);
+        if (error) throw error;
+      }
 
+      resetForm();
       await fetchEntries(userId);
     } catch (e: any) {
       console.error(e);
@@ -329,9 +421,7 @@ export default function Home() {
     } finally {
       // ✅ 어떤 경우에도 “처리중” 해제
       setSaving(false);
-      setTimeout(() => {
-        (document.activeElement as HTMLElement | null)?.blur?.();
-      }, 0);
+      blurActive();
     }
   }
 
@@ -440,7 +530,26 @@ export default function Home() {
 
         {/* New entry (BEFORE recent list) */}
         <div style={cardStyle}>
-          <h2 style={h2Style}>새 기록</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+            <h2 style={h2Style}>{editingId ? "기록 수정" : "새 기록"}</h2>
+
+            {editingId ? (
+              <button
+                style={btnMiniStyle}
+                onClick={resetForm}
+                disabled={saving}
+                title="수정 취소"
+              >
+                취소
+              </button>
+            ) : null}
+          </div>
+
+          {editingId ? (
+            <div style={{ ...smallText, marginBottom: 8 }}>
+              수정 중: <b>{date}</b> (저장하면 UPDATE 됩니다)
+            </div>
+          ) : null}
 
           <div style={{ display: "grid", gap: 10 }}>
             <input
@@ -508,11 +617,11 @@ export default function Home() {
             />
 
             <button
-              style={btnPrimaryStyle}
+              style={editingId ? btnPrimaryStyle : btnPrimaryStyle}
               onClick={saveEntry}
               disabled={saving || !userId}
             >
-              {saving ? "처리중..." : "저장"}
+              {saving ? "처리중..." : editingId ? "수정 저장" : "저장"}
             </button>
 
             {!userId ? (
@@ -533,40 +642,70 @@ export default function Home() {
             <div style={smallText}>기록이 없습니다.</div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              {entries.slice(0, 50).map((r) => (
-                <div
-                  key={r.id}
-                  style={{
-                    border: "1px solid rgba(0,0,0,0.10)",
-                    borderRadius: 14,
-                    padding: 12,
-                    background: "#ffffff",
-                  }}
-                >
+              {entries.slice(0, 50).map((r) => {
+                const isEditing = editingId === r.id;
+                return (
                   <div
+                    key={r.id}
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 10,
-                      alignItems: "baseline",
+                      border: isEditing
+                        ? "2px solid rgba(17,24,39,0.55)"
+                        : "1px solid rgba(0,0,0,0.10)",
+                      borderRadius: 14,
+                      padding: 12,
+                      background: "#ffffff",
                     }}
                   >
-                    <div style={{ fontWeight: 950 }}>{r.date}</div>
-                    <div style={{ fontSize: 13, opacity: 0.7 }}>
-                      {fmtDT(r.created_at)}
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        alignItems: "baseline",
+                      }}
+                    >
+                      <div style={{ fontWeight: 950 }}>{r.date}</div>
+                      <div style={{ fontSize: 13, opacity: 0.7 }}>
+                        {fmtDT(r.created_at)}
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 6, opacity: 0.95, lineHeight: 1.7 }}>
+                      <div>체중: {r.weight ?? "-"}</div>
+                      <div>혈압: {r.bp_s ?? "-"} / {r.bp_d ?? "-"}</div>
+                      <div>운동: {r.exercise_min ?? 0}분</div>
+                      <div>플랭크: {r.plank_min ?? 0}분</div>
+                      <div>무릎통증: {r.knee_pain ?? 0}</div>
+                      {r.notes ? <div>메모: {r.notes}</div> : null}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                      <button
+                        style={btnMiniPrimary}
+                        onClick={() => startEdit(r)}
+                        disabled={saving}
+                        title="이 기록을 수정합니다"
+                      >
+                        수정
+                      </button>
+                      <button
+                        style={btnMiniDanger}
+                        onClick={() => deleteEntry(r)}
+                        disabled={saving}
+                        title="이 기록을 삭제합니다"
+                      >
+                        삭제
+                      </button>
+
+                      {isEditing ? (
+                        <div style={{ ...smallText, marginLeft: 6 }}>
+                          ← 지금 이 기록을 수정 중
+                        </div>
+                      ) : null}
                     </div>
                   </div>
-
-                  <div style={{ marginTop: 6, opacity: 0.95, lineHeight: 1.7 }}>
-                    <div>체중: {r.weight ?? "-"}</div>
-                    <div>혈압: {r.bp_s ?? "-"} / {r.bp_d ?? "-"}</div>
-                    <div>운동: {r.exercise_min ?? 0}분</div>
-                    <div>플랭크: {r.plank_min ?? 0}분</div>
-                    <div>무릎통증: {r.knee_pain ?? 0}</div>
-                    {r.notes ? <div>메모: {r.notes}</div> : null}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
